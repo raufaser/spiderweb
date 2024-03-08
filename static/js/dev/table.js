@@ -67,6 +67,7 @@ class table_builder {
 		}
 
 		const td_qrzde = document.createElement('td');
+        td_qrzde.className = 'd-none d-lg-table-cell d-xl-table-cell'
 
 		a_qrzde.appendChild(i_qrzde);
 		td_qrzde.appendChild(a_qrzde);
@@ -79,7 +80,7 @@ class table_builder {
 		}).format(line.freq);
 
 		const span_freq = document.createElement('span');
-		span_freq.className = 'badge bg-warning text-dark badge-responsive';
+		span_freq.className = 'badge text-bg-warning badge-responsive';
 		span_freq.textContent = freq;
 
 		const td_freq = document.createElement('td');
@@ -159,7 +160,48 @@ class table_builder {
 		td_country_code.className = 'd-none d-lg-table-cell d-xl-table-cell';
 		td_country_code.textContent = line.country;
 		row.appendChild(td_country_code);
-
+        
+        //Column: Program
+        //const td_program = document.createElement('td');
+        //td_program.textContent = line.program;
+        //row.appendChild(td_program);
+        
+        //Column: References
+        const td_references = document.createElement('td');
+        const table_references = document.createElement('table');
+        for (let single_reference of line.references) {
+            const tr_single_reference = document.createElement('tr');
+            const td_single_reference = document.createElement('td');
+            
+            const span_badge = document.createElement('span');
+            span_badge.className = 'badge badge-responsive-pac rounded-pill';
+            span_badge.className += ' badge-' + single_reference[0].toLowerCase();
+            span_badge.textContent = single_reference[0];
+            td_single_reference.appendChild(span_badge);
+            
+            const span_reference = document.createElement('span');
+            span_reference.textContent = single_reference[1];
+            td_single_reference.appendChild(span_reference);
+            
+            const i_reference_info = document.createElement('i');
+            i_reference_info.className = 'bi bi-info-circle info-circle-pac';
+            i_reference_info.name = 'referenceInfo';
+			i_reference_info.role = 'button';
+            i_reference_info.setAttribute("data-bs-toggle", "popover");
+            //i_reference_info.setAttribute("data-bs-trigger", "click");
+			i_reference_info.setAttribute("data-bs-title", "Loading...");
+			i_reference_info.setAttribute("data-bs-content", "Fetching data of reference.");
+            i_reference_info.setAttribute("data-reference-info", JSON.stringify(single_reference));
+            
+            td_single_reference.appendChild(i_reference_info);
+            
+            tr_single_reference.appendChild(td_single_reference);
+            table_references.appendChild(tr_single_reference);
+        }
+        td_references.appendChild(table_references);
+        row.appendChild(td_references);
+        
+        
 		//Column: Comment			
 		const td_comm = document.createElement('td');
 		td_comm.className = 'd-none d-lg-table-cell d-xl-table-cell';
@@ -184,8 +226,8 @@ class table_builder {
 		let tm = hh + ':' + mi;
 		dt = dd + '/' + mo + '/' + yy;
 
-		const div_date_time = document.createElement('div');
-		div_date_time.className = 'd-flex flex-column';
+		const div_date_time = document.createElement('td');
+		//div_date_time.className = 'd-flex flex-column';
 		const p_time = document.createElement('div');
 		p_time.textContent = tm;
 		div_date_time.appendChild(p_time);
@@ -196,6 +238,12 @@ class table_builder {
 		}
 
 		row.appendChild(div_date_time);
+        
+        //Column: Source
+        const td_source = document.createElement('td');
+        td_source.className = 'd-none d-lg-table-cell d-xl-table-cell';
+        td_source.textContent = line.source;
+        row.appendChild(td_source);
 
 		//Finally append the row created to the table
 		return row;
@@ -240,10 +288,23 @@ class table_builder {
 			//replace current data with merge
 			this.current_data = merge_data;
 
+            //activate popovers on page
 			var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'));
 			var popoverList = popoverTriggerList.map(function (popoverTriggerEl) {
 				return new bootstrap.Popover(popoverTriggerEl);
 			});
+            
+            const referenceInfoList = document.querySelectorAll('.info-circle-pac');
+            //const referenceInfoPopoverList = [...referenceInfoList].map(popoverTriggerEl => new bootstrap.Popover(popoverTriggerEl, {
+			//const referenceInfoPopoverList = [...referenceInfoList].map(popoverTriggerEl => bootstrap.Popover.getOrCreateInstance(popoverTriggerEl, {
+            //    title: 'Loading...',
+			//	content: 'Fetching data of reference.',
+            //    //trigger: 'click',
+            //}));
+            
+            referenceInfoList.forEach(referenceInfoElement => referenceInfoElement.addEventListener('show.bs.popover', referenceInfoHandler));
+            //reference_element.addEventListener('show.bs.popover', referenceInfoHandler)
+            //reference_element.content = referenceInfoHandler;
 
 			this.first_time = false;
 		}
@@ -252,12 +313,50 @@ class table_builder {
 
 
 /********************************************************************************
- * javascript used to popolate main  table with spots            
+ * javascript used to popolate main table with spots            
  * ******************************************************************************/
 const adxo_url = 'https://www.ng3k.com/misc/adxo.html';
 const qrz_url = 'https://www.qrz.com/db/';
 const tb = new table_builder('bodyspot');
 var params_sv = {};
+
+const cors_proxy_url = 'https://corsproxy.io/?'
+const gma_url = 'https://www.cqgma.org/api/';
+
+function referenceInfoHandler(event) {
+    if (this.hasAttribute("data-reference-details-loaded")) {
+        return;
+    }
+    
+	console.log("referenceInfoHandler called");
+    
+    var myPopover = bootstrap.Popover.getInstance(this);
+    const arrayReferenceInfo = JSON.parse(this.dataset.referenceInfo);
+
+	const fetch_url = gma_url + arrayReferenceInfo[0].toLowerCase() + "/?" + arrayReferenceInfo[1];
+
+	const request = new XMLHttpRequest();
+	request.open("GET", fetch_url, false); // `false` makes the request synchronous
+	request.send(null);
+
+	if (request.status === 200) {
+		console.log(request.responseText);
+		const referenceData = JSON.parse(request.responseText);
+
+		myPopover.setContent({
+			'.popover-header': referenceData.ref,
+			'.popover-body': referenceData.name
+		})
+
+		this.setAttribute("data-reference-details-loaded", true)
+	}
+	else {
+		myPopover.setContent({
+			'.popover-header': arrayReferenceInfo[0],
+			'.popover-body': arrayReferenceInfo[1]
+		})
+	}
+}
 
 /**
  * Decode Announced Dx Operation (ng3k)
@@ -293,7 +392,10 @@ function mySearch(event) {
  * @param qry_json {object} The input json 
  */
 function compose_filter(id, len, qry_json) {
-
+	const filterElement = document.getElementById(id);
+	if (filterElement == null) {
+		return qry_json;
+	}
 	try {
 		let selectedFilter = [].map.call(document.getElementById(id).selectedOptions, option => option.value);
 		if (selectedFilter.length < len) {

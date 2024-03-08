@@ -1,4 +1,4 @@
-__author__ = "IU1BOW - Corrado"
+__author__ = "Jan Liebenau"
 import flask
 import secrets
 from flask import request, render_template
@@ -8,12 +8,14 @@ import json
 import threading
 import logging
 import logging.config
+import redis
+from pyhamtools import LookupLib, Callinfo
+import country_converter as coco
 from lib.dxtelnet import who
 from lib.adxo import get_adxo_events
 from lib.qry import query_manager
 from lib.cty import prefix_table
 from lib.plot_data_provider import ContinentsBandsProvider, SpotsPerMounthProvider, SpotsTrend, HourBand, WorldDxSpotsLive
-
 
 logging.config.fileConfig("cfg/webapp_log_config.ini", disable_existing_loggers=True)
 logger = logging.getLogger(__name__)
@@ -64,6 +66,16 @@ else:
 
 # define country table for search info on callsigns
 pfxt = prefix_table()
+
+# setting up pyhamtools to look in ClubLog XML and caching in redis
+r = redis.Redis()
+lookuplib_clublog = LookupLib(lookuptype="clublogxml", apikey="b56e6fb39efdb6da44d022199c9b0a152c658dc1")
+lookuplib_clublog.copy_data_in_redis(redis_prefix="CL", redis_instance=r)
+lookuplib_redis_clublog = LookupLib(lookuptype="redis", redis_instance=r, redis_prefix="CL")
+callinfo_redis_clublog = Callinfo(lookuplib_redis_clublog)
+
+# create a country converter object
+country_converter = coco.CountryConverter()
 
 # create object query manager
 qm = query_manager()
@@ -181,7 +193,10 @@ def query_build(parameters):
             last_rowid = 0
 
         query_string = (
-            "SELECT rowid, spotter AS de, freq, spotcall AS dx, comment AS comm, time, spotdxcc from spot WHERE rowid > "
+            #"SELECT rowid, spotter AS de, freq, spotcall AS dx, comment AS comm, time, spotdxcc from spot WHERE rowid > "
+            '''SELECT rowid, spotter AS de, freq, spotcall AS dx, time, spotdxcc, spot_additional.program, spot_additional.source, spot_additional.reference, spot_additional.clean_comment as comm
+               FROM spot INNER JOIN spot_additional ON spot.rowid = spot_additional.spot_id 
+               WHERE rowid > '''
             + last_rowid
         )
 
@@ -227,11 +242,15 @@ def spotquery(parameters):
             logging.debug('search eith other filters')
             query_string = query_build(parameters)
 
+        logger.debug("Execute query: " + query_string)                                              
         qm.qry(query_string)
         data = qm.get_data()
         row_headers = qm.get_headers()
 
         logger.debug("query done")
+        logger.debug("Row headers:")
+        logger.debug(row_headers)
+        logger.debug("Data:")                            
         logger.debug(data)
 
         if data is None or len(data) == 0:
@@ -241,11 +260,80 @@ def spotquery(parameters):
         for result in data:
             # create dictionary from recorset
             main_result = dict(zip(row_headers, result))
-            # find the country in prefix table
-            search_prefix = pfxt.find(main_result["dx"])
-            # merge recordset and contry prefix
-            main_result["country"] = search_prefix["country"]
-            main_result["iso"] = search_prefix["iso"]
+            
+            # Skip to next spot if callsign is not valid
+            if not callinfo_redis_clublog.is_valid_callsign(main_result["dx"]):
+                continue
+            
+            # Country name and ISO2 identifier
+            country_name = ""
+            country_name_short = ""
+            country_iso = ""
+            
+            # find country in ClubLog XML
+            country_name = callinfo_redis_clublog.get_country_name(main_result["dx"])
+            logging.debug('Country Name = ' + country_name)
+            country_name_short = country_converter.convert(country_name, to='name_short')
+            logging.debug('Short Country Name = ' + country_name_short)
+            
+            if country_name_short == 'not found':
+                # Country converter cannot find a correspondig country 
+                # so it might be a DXCC which is not a country
+                
+                # Handling some special cases
+                if country_name == "ASCENSION ISLAND":
+                    country_name_short = "Ascension Island"
+                    country_iso = "sh-ac"
+                elif country_name == "CANARY ISLANDS":
+                    country_name_short = "Canary Islands"
+                    country_iso = "ic"
+                elif country_name == "CLIPPERTON ISLAND":
+                    country_name_short = "Clipperton Island"
+                    country_iso = "cp"
+                elif country_name == "ENGLAND":
+                    country_name_short = "England"
+                    country_iso = "gb-eng"
+                elif country_name == "REPUBLIC OF KOSOVO":
+                    country_name_short = "Kosovo"
+                    country_iso = "xk"
+                elif country_name == "NORTHERN IRELAND":
+                    country_name_short = "Northern Ireland"
+                    country_iso = "gb-nir"
+                elif country_name == "SAINT HELENA":
+                    country_name_short = "St. Helena"
+                    country_iso = "sh-hl"
+                elif country_name == "SCOTLAND":
+                    country_name_short = "Scotland"
+                    country_iso = "gb-sct"
+                elif country_name == "TRISTAN DA CUNHA & GOUGH ISLANDS":
+                    country_name_short = "Tristan da Cunha"
+                    country_iso = "sh-ta"
+                elif country_name == "UNITED NATIONS HQ":
+                    country_name_short = "United Nations"
+                    country_iso = "un"
+                elif country_name == "WALES":
+                    country_name_short = "Wales"
+                    country_iso = "gb-wls"
+                else:
+                    # Still not found. Look it up in Country Files
+                    # and get ISO from country.json
+                    search_prefix = pfxt.find(main_result["dx"])  
+                    country_name_short = search_prefix["country"] 
+                    country_iso = search_prefix["iso"]
+            else:
+                country_iso = country_converter.convert(country_name, to='ISO2').lower()
+                logging.debug('Country ISO = ' + country_iso)
+                
+            main_result["country"] = country_name_short
+            main_result["iso"] = country_iso
+            
+            query_string_references = "SELECT reference_type, reference_name FROM spot_reference WHERE spot_id = " + str(main_result["rowid"])
+            logger.debug("Execute query: " + query_string_references)  
+            qm.qry(query_string_references)
+            data_references = qm.get_data()
+            logger.debug("Data:")                            
+            logger.debug(data_references)
+            main_result["references"] = data_references
 
             payload.append({**main_result})
 
@@ -486,16 +574,14 @@ def add_security_headers(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     resp.headers["Cache-Control"] = "public, no-cache"
-    resp.headers["Pragma"] = "no-cache"
-
-    
+    resp.headers["Pragma"] = "no-cache"    
     
     resp.headers["Content-Security-Policy"] = "\
     default-src 'self';\
     script-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'nonce-"+inline_script_nonce+"';\
     style-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'unsafe-inline';\
     object-src 'none';base-uri 'self';\
-    connect-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com sidc.be;\
+    connect-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com sidc.be www.cqgma.org cqgma.org corsproxy.io;\
     font-src 'self' cdn.jsdelivr.net;\
     frame-src 'self';\
     frame-ancestors 'none';\

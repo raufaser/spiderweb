@@ -411,7 +411,6 @@ class HourBand(BaseDataProvider):
 					count(0) AS total
 			from spot 
 					WHERE FROM_UNIXTIME(time) > DATE_SUB(now(), INTERVAL 1 MONTH)
-					and rowid > (select max(rowid)-500000 from spot) 
 				group by 1, 2
 				) as s1
 				order by s1.band, s1.hour
@@ -477,7 +476,6 @@ class WorldDxSpotsLive(BaseDataProvider):
 			select spotcall as dx
 			from  spot    
 			WHERE FROM_UNIXTIME(time) > DATE_SUB(now(), INTERVAL 1 HOUR)
-			and rowid > (select max(rowid)-10000 from spot) 
 			group by 1;
 		"""
 

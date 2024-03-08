@@ -16,7 +16,7 @@
 	}
 
 	.badge-responsive {
-		width: 40px;
+		width: 50px;
 	}
 }
 
@@ -55,7 +55,7 @@
 
 
 .ipcs {
-	background-image: url("/static/images/background.webp");
+	background-image: url("/static/images/portable_activity_cluster_background.webp");
 	background-size: cover;
 	background-repeat: no-repeat;
 }
