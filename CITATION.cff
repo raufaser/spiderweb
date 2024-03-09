@@ -24,10 +24,5 @@ keywords:
   - dxcluster
   - spiderweb
 license: GPL-3.0
-<<<<<<< HEAD
-version: 
-date-released: 2023-12-08
-=======
-version: 
-date-released: 2023-12-08
->>>>>>> staging
+version: v2.5.2
+date-released: 2024-03-09

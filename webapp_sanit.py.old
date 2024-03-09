@@ -1,4 +1,4 @@
-__author__ = "Jan Liebenau"
+__author__ = "IU1BOW - Corrado"
 import flask
 import secrets
 from flask import request, render_template
@@ -8,16 +8,11 @@ import json
 import threading
 import logging
 import logging.config
-import redis
-from pyhamtools import LookupLib, Callinfo
-import country_converter as coco
 from lib.dxtelnet import who
 from lib.adxo import get_adxo_events
 from lib.qry import query_manager
 from lib.cty import prefix_table
 from lib.plot_data_provider import ContinentsBandsProvider, SpotsPerMounthProvider, SpotsTrend, HourBand, WorldDxSpotsLive
-import requests
-import xmltodict
 
 logging.config.fileConfig("cfg/webapp_log_config.ini", disable_existing_loggers=True)
 logger = logging.getLogger(__name__)
@@ -32,8 +27,8 @@ app.config.update(
 )
 version_file = open("cfg/version.txt", "r")
 app.config["VERSION"] = version_file.read().strip()
-version_file.close
-logger.info("Version:"+app.config["VERSION"] )
+version_file.close()
+logger.info("Version:" + app.config["VERSION"])
 
 inline_script_nonce = ""
 
@@ -45,10 +40,6 @@ if app.config["DEBUG"]:
     minify(app=app, html=False, js=False, cssless=False)
 else:
     minify(app=app, html=True, js=True, cssless=False)
-
-#removing whitespace from jinja2 html rendered
-app.jinja_env.trim_blocks = True
-app.jinja_env.lstrip_blocks = True    
 
 # load config file
 with open("cfg/config.json") as json_data_file:
@@ -77,23 +68,12 @@ else:
 # define country table for search info on callsigns
 pfxt = prefix_table()
 
-# setting up pyhamtools to look in ClubLog XML and caching in redis
-r = redis.Redis()
-lookuplib_clublog = LookupLib(lookuptype="clublogxml", apikey="b56e6fb39efdb6da44d022199c9b0a152c658dc1")
-lookuplib_clublog.copy_data_in_redis(redis_prefix="CL", redis_instance=r)
-lookuplib_redis_clublog = LookupLib(lookuptype="redis", redis_instance=r, redis_prefix="CL")
-callinfo_redis_clublog = Callinfo(lookuplib_redis_clublog)
-
-# create a country converter object
-country_converter = coco.CountryConverter()
-
 # create object query manager
 qm = query_manager()
 
 # find id  in json : ie frequency / continent
 def find_id_json(json_object, name):
     return [obj for obj in json_object if obj["id"] == name][0]
-
 
 def query_build_callsign(callsign):
 
@@ -120,7 +100,7 @@ def query_build_callsign(callsign):
 def query_build(parameters):
 
     try:
-    
+
         last_rowid = str(parameters["lr"])  # Last rowid fetched by front end
 
         get_param = lambda parameters, parm_name: parameters[parm_name] if (parm_name in parameters) else []
@@ -134,16 +114,17 @@ def query_build(parameters):
         
         decq = []
         if "cqdeInput" in parameters:
-            decq[0] = parameters["cqdeInput"] 
+            decq.append(parameters["cqdeInput"])
 
         dxcq = []
         if "cqdxInput" in parameters:   
-            dxcq[0] = parameters["cqdxInput"] 
+            dxcq.append(parameters["cqdxInput"]) 
 
         query_string = ""
 
         #construct  callsign of spot dx callsign 
-        dxcalls_qry_string = " AND spotcall IN (" + ''.join(map(lambda x: "'" + x + "'," if x != dxcalls[-1] else "'" + x + "'", dxcalls)) + ")"
+        dxcalls_qry_string = " AND spotcall IN (" + ",".join(["%s" for _ in dxcalls]) + ")"
+        dxcalls_params = tuple(dxcalls)
 
         # construct band query decoding frequencies with json file
         band_qry_string = " AND (("
@@ -175,7 +156,7 @@ def query_build(parameters):
 
         mode_qry_string += "))"
 
-        #Exluding FT8 or FT4 connection
+        # Exluding FT8 or FT4 connection
         ft8_qry_string = " AND ("
         if exclft8:
             ft8_qry_string += "(comment NOT LIKE '%FT8%')"
@@ -188,7 +169,7 @@ def query_build(parameters):
                     + str(single_mode["freq"][j]["max"])
                     + ")"
                 )
-        ft8_qry_string += ")" 
+        ft8_qry_string += ")"
 
         ft4_qry_string = " AND ("
         if exclft4:
@@ -202,37 +183,32 @@ def query_build(parameters):
                     + str(single_mode["freq"][j]["max"])
                     + ")"
                 )
-        ft4_qry_string += ")" 
+        ft4_qry_string += ")"
 
         # construct DE continent region query
-        dere_qry_string = " AND spottercq IN ("
-        for i, item_dere in enumerate(dere):
-            continent = find_id_json(continents_cq["continents"], item_dere)
-            if i > 0:
-                dere_qry_string += ","
-            dere_qry_string += str(continent["cq"])
-        dere_qry_string += ")"
+        dere_qry_string = " AND spottercq IN (" + ",".join(["%s" for _ in dere]) + ")"
+        dere_params = tuple(dere)
 
         # construct DX continent region query
-        dxre_qry_string = " AND spotcq IN ("
-        for i, item_dxre in enumerate(dxre):
-            continent = find_id_json(continents_cq["continents"], item_dxre)
-            if i > 0:
-                dxre_qry_string += ","
-            dxre_qry_string += str(continent["cq"])
-        dxre_qry_string += ")"
+        dxre_qry_string = " AND spotcq IN (" + ",".join(["%s" for _ in dxre]) + ")"
+        dxre_params = tuple(dxre)
 
         if enable_cq_filter == "Y":
             # construct de cq query
             decq_qry_string = ""
+            decq_params = []
             if len(decq) == 1:
                 if decq[0].isnumeric():
-                    decq_qry_string = " AND spottercq =" + decq[0]
+                    decq_qry_string = " AND spottercq = %s"
+                    decq_params = (decq[0],)
+
             # construct dx cq query
             dxcq_qry_string = ""
+            dxcq_params = []
             if len(dxcq) == 1:
                 if dxcq[0].isnumeric():
-                    dxcq_qry_string = " AND spotcq =" + dxcq[0]
+                    dxcq_qry_string = " AND spotcq = %s"
+                    dxcq_params = (dxcq[0],)
 
         if last_rowid is None:
             last_rowid = "0"
@@ -240,11 +216,7 @@ def query_build(parameters):
             last_rowid = 0
 
         query_string = (
-            #"SELECT rowid, spotter AS de, freq, spotcall AS dx, comment AS comm, time, spotdxcc from spot WHERE rowid > "
-            '''SELECT rowid, spotter AS de, freq, spotcall AS dx, time, spotdxcc, spot_additional.program, spot_additional.source, spot_additional.reference, spot_additional.clean_comment as comm
-               FROM spot INNER JOIN spot_additional ON spot.rowid = spot_additional.spot_id 
-               WHERE rowid > '''
-            + last_rowid
+            "SELECT rowid, spotter AS de, freq, spotcall AS dx, comment AS comm, time, spotdxcc from spot WHERE rowid > %s"
         )
 
         if dxcalls:
@@ -271,19 +243,32 @@ def query_build(parameters):
         if enable_cq_filter == "Y":
             if len(decq_qry_string) > 0:
                 query_string += decq_qry_string
+                decq_params = (decq_params,)
 
             if len(dxcq_qry_string) > 0:
                 query_string += dxcq_qry_string
+                dxcq_params = (dxcq_params,)
 
         query_string += " ORDER BY rowid desc limit 50;"
 
-        logger.debug (query_string)
+        logger.debug(query_string)
 
     except Exception as e:
         logger.error(e)
         query_string = ""
 
-    return query_string
+    return query_string, (
+        last_rowid,
+        *dxcalls_params,
+        *band_params,
+        *mode_params,
+        *ft8_params,
+        *ft4_params,
+        *dere_params,
+        *dxre_params,
+        *decq_params,
+        *dxcq_params,
+    )
 
 
 # the main query to show spots
@@ -294,20 +279,16 @@ def spotquery(parameters):
 
         if 'callsign' in parameters:
             logging.debug('search callsign')
-            query_string = query_build_callsign( parameters['callsign'] )
+            query_string, params = query_build_callsign(parameters['callsign'])
         else:
             logging.debug('search eith other filters')
-            query_string = query_build(parameters)
+            query_string, params = query_build(parameters)
 
-        logger.debug("Execute query: " + query_string)                                              
-        qm.qry(query_string)
+        qm.qry(query_string, params)
         data = qm.get_data()
         row_headers = qm.get_headers()
 
         logger.debug("query done")
-        logger.debug("Row headers:")
-        logger.debug(row_headers)
-        logger.debug("Data:")                            
         logger.debug(data)
 
         if data is None or len(data) == 0:
@@ -317,80 +298,11 @@ def spotquery(parameters):
         for result in data:
             # create dictionary from recorset
             main_result = dict(zip(row_headers, result))
-            
-            # Skip to next spot if callsign is not valid
-            if not callinfo_redis_clublog.is_valid_callsign(main_result["dx"]):
-                continue
-            
-            # Country name and ISO2 identifier
-            country_name = ""
-            country_name_short = ""
-            country_iso = ""
-            
-            # find country in ClubLog XML
-            country_name = callinfo_redis_clublog.get_country_name(main_result["dx"])
-            logging.debug('Country Name = ' + country_name)
-            country_name_short = country_converter.convert(country_name, to='name_short')
-            logging.debug('Short Country Name = ' + country_name_short)
-            
-            if country_name_short == 'not found':
-                # Country converter cannot find a correspondig country 
-                # so it might be a DXCC which is not a country
-                
-                # Handling some special cases
-                if country_name == "ASCENSION ISLAND":
-                    country_name_short = "Ascension Island"
-                    country_iso = "sh-ac"
-                elif country_name == "CANARY ISLANDS":
-                    country_name_short = "Canary Islands"
-                    country_iso = "ic"
-                elif country_name == "CLIPPERTON ISLAND":
-                    country_name_short = "Clipperton Island"
-                    country_iso = "cp"
-                elif country_name == "ENGLAND":
-                    country_name_short = "England"
-                    country_iso = "gb-eng"
-                elif country_name == "REPUBLIC OF KOSOVO":
-                    country_name_short = "Kosovo"
-                    country_iso = "xk"
-                elif country_name == "NORTHERN IRELAND":
-                    country_name_short = "Northern Ireland"
-                    country_iso = "gb-nir"
-                elif country_name == "SAINT HELENA":
-                    country_name_short = "St. Helena"
-                    country_iso = "sh-hl"
-                elif country_name == "SCOTLAND":
-                    country_name_short = "Scotland"
-                    country_iso = "gb-sct"
-                elif country_name == "TRISTAN DA CUNHA & GOUGH ISLANDS":
-                    country_name_short = "Tristan da Cunha"
-                    country_iso = "sh-ta"
-                elif country_name == "UNITED NATIONS HQ":
-                    country_name_short = "United Nations"
-                    country_iso = "un"
-                elif country_name == "WALES":
-                    country_name_short = "Wales"
-                    country_iso = "gb-wls"
-                else:
-                    # Still not found. Look it up in Country Files
-                    # and get ISO from country.json
-                    search_prefix = pfxt.find(main_result["dx"])  
-                    country_name_short = search_prefix["country"] 
-                    country_iso = search_prefix["iso"]
-            else:
-                country_iso = country_converter.convert(country_name, to='ISO2').lower()
-                logging.debug('Country ISO = ' + country_iso)
-                
-            main_result["country"] = country_name_short
-            main_result["iso"] = country_iso
-            
-            query_string_references = "SELECT reference_type, reference_name FROM spot_reference WHERE spot_id = " + str(main_result["rowid"])
-            logger.debug("Execute query: " + query_string_references)  
-            qm.qry(query_string_references)
-            data_references = qm.get_data()
-            logger.debug("Data:")                            
-            logger.debug(data_references)
-            main_result["references"] = data_references
+            # find the country in prefix table
+            search_prefix = pfxt.find(main_result["dx"])
+            # merge recordset and contry prefix
+            main_result["country"] = search_prefix["country"]
+            main_result["iso"] = search_prefix["iso"]
 
             payload.append({**main_result})
 
@@ -466,7 +378,7 @@ def spots():
 #Show all dx spot callsigns 
 def get_dx_calls():
     try:
-        query_string = "SELECT spotcall AS dx FROM (select spotcall from spot  order by rowid desc limit 50000) s1  GROUP BY spotcall ORDER BY count(spotcall) DESC LIMIT 100;"
+        query_string = "SELECT spotcall AS dx FROM spot GROUP BY spotcall ORDER BY count(spotcall) DESC LIMIT 500"
         qm.qry(query_string)
         data = qm.get_data()
         row_headers = qm.get_headers()
@@ -514,23 +426,8 @@ def plots():
     )
     return response
 
-
 @app.route("/propagation.html")
 def propagation():
-
-    #get solar data in XML format and convert to json
-    solar_data={}
-    url = "https://www.hamqsl.com/solarxml.php"
-    try:
-        logging.debug("connection to: " + url)
-        req = requests.get(url)
-        logger.debug(req.content)
-        solar_data = xmltodict.parse(req.content)    
-        logger.debug(solar_data)
-
-    except Exception as e1:
-        logging.error(e1)
-
     response = flask.Response(
         render_template(
             "propagation.html",
@@ -539,7 +436,6 @@ def propagation():
             telnet=cfg["telnet"]["host"]+":"+cfg["telnet"]["port"],
             mail=cfg["mail"],
             menu_list=cfg["menu"]["menu_list"],
-            solar_data=solar_data
         )
     )
     return response
@@ -690,9 +586,9 @@ def add_security_headers(resp):
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    #resp.headers["Access-Control-Allow-Origin"]= "sidc.be prop.kc2g.com www.hamqsl.com"
     resp.headers["Cache-Control"] = "public, no-cache"
     resp.headers["Pragma"] = "no-cache"
+
     resp.headers["ETag"] = app.config["VERSION"]
     #resp.headers["Report-To"] = '{"group":"csp-endpoint", "max_age":10886400, "endpoints":[{"url":"/csp-reports"}]}'    
     resp.headers["Content-Security-Policy"] = "\
@@ -700,12 +596,12 @@ def add_security_headers(resp):
     script-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'nonce-"+inline_script_nonce+"';\
     style-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net;\
     object-src 'none';base-uri 'self';\
-    connect-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com sidc.be prop.kc2g.com www.hamqsl.com www.cqgma.org cqgma.org corsproxy.io;\
+    connect-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com sidc.be;\
     font-src 'self' cdn.jsdelivr.net;\
     frame-src 'self';\
     frame-ancestors 'none';\
     form-action 'none';\
-    img-src 'self' data: cdnjs.cloudflare.com sidc.be prop.kc2g.com ;\
+    img-src 'self' data: cdnjs.cloudflare.com sidc.be;\
     manifest-src 'self';\
     media-src 'self';\
     worker-src 'self';\

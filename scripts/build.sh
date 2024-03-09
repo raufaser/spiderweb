@@ -53,14 +53,19 @@ html_change_references(){
 	done
 }
 
-
-
 if [ "$1" != "-r" ] && [ "$1" != "-d" ]; then
-	echo 'wrong options:'
+	echo 'wrong options for first parameter. Options permitted:'
 	echo '   -d: debug'
 	echo '   -r: release'
 	exit 5
 fi
+
+if [ "$2" != "-c" ]  && [ "$2" != "" ]; then
+	echo 'wrong options for second parameter. Option permitted:'
+	echo '   -c: commit'
+	exit 5
+fi
+
 
 echo '*** SPIDERWEB  building process ***'
 if [ "$1" == "-r" ]; then
@@ -131,8 +136,9 @@ if [ "$1" == "-r" ]; then
 
 	echo 'force some requirements...'
 	sed -i 's/mysql-connector-python==8.0.31/mysql-connector-python>=8.0.31/' ../requirements.txt
+	sed -i 's/mysql-connector-python==8.2.0/mysql-connector-python>=8.2.0/' ../requirements.txt
 
-	if ! sed -i '13,20s/level=DEBUG/level=INFO/g' ${app_ini}; then               
+	if ! sed -i '7,25s/level=DEBUG/level=INFO/g' ${app_ini}; then               
 		echo 'ERROR settimg loglevel=INFO '
 		exit 12
 	fi
@@ -142,7 +148,7 @@ if [ "$1" == "-d" ]; then
 	echo 'creating DEBUG application'
 	html_change_references -d
 
-	if ! sed -i '13,20s/level=INFO/level=DEBUG/g' ${app_ini}; then               
+	if ! sed -i '7,25s/level=INFO/level=DEBUG/g' ${app_ini}; then               
 		echo 'ERROR settimg loglevel=DEBUG '
 		exit 12
 	fi
@@ -158,15 +164,17 @@ fi
 #	exit 5
 #fi
 
-echo 'get version from git'
+echo 'get version from version.txt'
 #if ! ver=$(git describe --tags --abbrev=0)
-if ! ver=$(git tag|tail -1)
+#if ! ver=$(git tag|tail -1)
+if ! ver=$(head -1 ../cfg/version.txt)
 then
-	echo 'ERROR on get version from git'
+	echo 'ERROR on get version'
 	exit 10
 fi
+
 if [ ${ver} == "" ]; then
-	echo 'ERROR git version is empty'
+	echo 'ERROR version is empty'
 	exit 20
 fi
 echo 'version: '${ver}
@@ -215,8 +223,6 @@ then
 fi
 
 
-
-
 echo 'writing version in '${base_template} '...'
 if ! sed -i 's/<span id="version">v.*<\/span>/<span id="version">'$ver'<\/span>/g' ${path_templates}/${base_template}
 then                          
@@ -263,32 +269,55 @@ elif [ "${1}" == "-d" ]; then
 
 fi
 
-#static_build_path_i=$(mktemp -d /tmp/spiderweb_static_build_i-XXXXXXXXX)
-#static_build_path_o=$(mktemp -d /tmp/spiderweb_static_build_o-XXXXXXXXX)
-#
-#cp ${path_templates}/_base.html   ${static_build_path_i}
-#cp ${path_templates}/offline.html ${static_build_path_i}
-#
-#echo 'generating static pages...'
-#if ! python ../lib/static_build.py ${static_build_path_i}  ${static_build_path_o}
-#then                               
-#	echo 'ERROR generating static pages'                
-#	rm -rf ${static_build_path_i}
-#	rm -rf ${static_build_path_o}
-#	exit 50
-#fi
-#
-#if ! cp ${static_build_path_o}/offline.html ${path_static_html}
-#then
-#	echo 'ERROR copying static pages'                
-#	rm -rf ${static_build_path_i}
-#	rm -rf ${static_build_path_o}
-#	exit 51
-#fi
-#
-#rm -rf ${static_build_path_i}
-#rm -rf ${static_build_path_o}
+echo Build ok
+
+if [ "$2" == "-c" ]; then
+	if [ "$1" == "-r" ]; then
+		echo '*** SPIDERWEB  commit process ***'
+
+		head -10 ../docs/CHANGELOG.md
+
+		read -p "Do you want to proceed to commit version ${ver} (yes/no) " yn
+
+		case $yn in 
+			yes ) echo ok, we will proceed;;
+			y ) echo ok, we will proceed;;
+			no ) echo exiting...;
+				exit;;
+			n ) echo exiting...;
+				exit;;
+			* ) echo invalid response;
+				exit 1;;
+		esac
+
+
+		if ! git add --all ; then
+			echo 'Error on adding files'
+			exit 7
+		fi		
+		
+		echo 'Please, add comment for commit on tag ' ${ver}
+		read comm_tag_msg
+		if ! git commit -m "${comm_tag_msg}"; then
+			echo 'Error on commit'
+			exit 9
+		fi			
+		echo Commit ok
+
+		if ! git tag ${ver} HEAD -m "${comm_tag_msg}"; then
+			echo 'Error on tagging'
+			exit 8
+		fi			
+		echo Tagging ok
+		echo If you would to push execute this command:
+		echo git push --atomic origin development ${ver}
+	else
+		echo 'Error: You can make a commit only if the first option is -r = release!!!'
+		exit 10
+	fi
+fi
 
 
 echo
-echo Build ok
+
+#git push --atomic origin development v2.4.5.71
